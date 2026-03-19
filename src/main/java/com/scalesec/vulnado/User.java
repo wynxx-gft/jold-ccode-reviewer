@@ -50,7 +50,7 @@ public class User {
       if (rs.next()) {
         String user_id = rs.getString("user_id");
         String username = rs.getString("username");
-        String password = rs.getString("password");
+        String password = rs.ge
         user = new User(user_id, username, password);
       }
       cxn.close();
