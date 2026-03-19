@@ -72,9 +72,9 @@ jobs:
           for FILE in ${{ env.java_files }}; do
             CLASS_NAME=$(basename "$FILE" .java)
             TEST_FILE="src/test/java/com/scalesec/vulnado/${CLASS_NAME}Tests.java"
-            FILES="--form files=@$FILE"
+            FILES="--form files=@$FILE;type=text/x-java"
             if [ -f "$TEST_FILE" ]; then
-              FILES="$FILES --form ExistingTests=@$TEST_FILE"
+              FILES="$FILES --form ExistingTests=@$TEST_FILE;type=text/x-java"
             fi
             RESPONSE=$(curl --location 'https://api.${{ vars.INSTANCE }}/ai/test' \
               --header "Authorization: Bearer ${{ env.access_token }}" \
@@ -137,7 +137,7 @@ jobs:
         run: |
           for FILE in ${{ env.java_files }}; do
             CLASS_NAME=$(basename "$FILE" .java)
-            FILES="--form files=@$FILE"
+            FILES="--form files=@$FILE;type=text/x-java"
             RESPONSE=$(curl --location 'https://api.${{ vars.INSTANCE }}/ai/document' \
               --header "Authorization: Bearer ${{ env.access_token }}" \
               --form "RunName=GenerateDocPR" \
