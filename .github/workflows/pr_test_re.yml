@@ -214,7 +214,7 @@ jobs:
             --form 'PromptId="CodeReviewer__CodeReviewer_V1_Conventions"' \
             --form 'Llm="${{ vars.LLM }}"' \
             --form 'PullRequestId="${{ github.event.pull_request.number }}"' \
-            --form 'RepoName="julioarruda/vulnado"' \
+            --form 'RepoName="${{ github.repository }}"' \
             --form 'AdditionalInstructions="generate the answer in the following language ${{ vars.LANGUAGE }}"' \
             --form 'Conventions="Header,Description,Summary,Recomendations,VulnExplanation"')
           echo "API Response: $RESPONSE"
