@@ -73,6 +73,11 @@ class UserTest {
         when(mockConnection.createStatement()).thenReturn(mockStatement);
     }
 
+    // Helper method to create a user with specific attributes
+    private User createUserWithAttributes(String id, String username, String password) {
+        return new User(id, username, password);
+    }
+
     // ==================== Constructor Tests ====================
 
     /**
@@ -113,6 +118,64 @@ class UserTest {
         assertEquals("", user.id, "User id should be empty string");
         assertEquals("", user.username, "User username should be empty string");
         assertEquals("", user.hashedPassword, "User hashedPassword should be empty string");
+    }
+
+    /**
+     * Test that User constructor handles whitespace strings
+     */
+    @Test
+    void constructor_WithWhitespaceStrings_ShouldAcceptWhitespaceStrings() {
+        User user = new User("   ", "   ", "   ");
+
+        assertEquals("   ", user.id, "User id should preserve whitespace");
+        assertEquals("   ", user.username, "User username should preserve whitespace");
+        assertEquals("   ", user.hashedPassword, "User hashedPassword should preserve whitespace");
+    }
+
+    /**
+     * Test that User constructor handles special characters
+     */
+    @Test
+    void constructor_WithSpecialCharacters_ShouldAcceptSpecialCharacters() {
+        String specialId = "id-123_456";
+        String specialUsername = "user@domain.com";
+        String specialPassword = "p@ss#w0rd!$%";
+
+        User user = new User(specialId, specialUsername, specialPassword);
+
+        assertEquals(specialId, user.id, "User id should accept special characters");
+        assertEquals(specialUsername, user.username, "User username should accept special characters");
+        assertEquals(specialPassword, user.hashedPassword, "User hashedPassword should accept special characters");
+    }
+
+    /**
+     * Test that User constructor handles unicode characters
+     */
+    @Test
+    void constructor_WithUnicodeCharacters_ShouldAcceptUnicodeCharacters() {
+        String unicodeId = "用户123";
+        String unicodeUsername = "пользователь";
+        String unicodePassword = "密码αβγ";
+
+        User user = new User(unicodeId, unicodeUsername, unicodePassword);
+
+        assertEquals(unicodeId, user.id, "User id should accept unicode characters");
+        assertEquals(unicodeUsername, user.username, "User username should accept unicode characters");
+        assertEquals(unicodePassword, user.hashedPassword, "User hashedPassword should accept unicode characters");
+    }
+
+    /**
+     * Test that User constructor handles very long strings
+     */
+    @Test
+    void constructor_WithVeryLongStrings_ShouldAcceptLongStrings() {
+        String longString = "a".repeat(10000);
+
+        User user = new User(longString, longString, longString);
+
+        assertEquals(longString, user.id, "User id should accept very long strings");
+        assertEquals(longString, user.username, "User username should accept very long strings");
+        assertEquals(longString, user.hashedPassword, "User hashedPassword should accept very long strings");
     }
 
     // ==================== Token Generation Tests ====================
@@ -189,6 +252,80 @@ class UserTest {
         String token2 = testUser.token(secret2);
 
         assertNotEquals(token1, token2, "Tokens generated with different secrets should be different");
+    }
+
+    /**
+     * Test token generation with minimum length secret
+     */
+    @Test
+    void token_WithMinimumLengthSecret_ShouldGenerateValidToken() {
+        // HMAC-SHA256 requires at least 256 bits (32 bytes) key
+        String minSecret = "12345678901234567890123456789012";
+
+        String token = testUser.token(minSecret);
+
+        assertNotNull(token, "Token should be generated with minimum length secret");
+        assertEquals(3, token.split("\\.").length, "Token should have valid JWT structure");
+    }
+
+    /**
+     * Test token generation with username containing special characters
+     */
+    @Test
+    void token_WithSpecialCharactersInUsername_ShouldGenerateValidToken() {
+        User specialUser = new User("1", "user@domain.com!#$%", "password");
+
+        String token = specialUser.token(TEST_SECRET);
+        SecretKey key = Keys.hmacShaKeyFor(TEST_SECRET.getBytes());
+        
+        String subject = Jwts.parserBuilder()
+                .setSigningKey(key)
+                .build()
+                .parseClaimsJws(token)
+                .getBody()
+                .getSubject();
+
+        assertEquals(specialUser.username, subject, "Token should correctly encode special characters in username");
+    }
+
+    /**
+     * Test token generation with empty username
+     */
+    @Test
+    void token_WithEmptyUsername_ShouldGenerateValidToken() {
+        User emptyUsernameUser = new User("1", "", "password");
+
+        String token = emptyUsernameUser.token(TEST_SECRET);
+        SecretKey key = Keys.hmacShaKeyFor(TEST_SECRET.getBytes());
+        
+        String subject = Jwts.parserBuilder()
+                .setSigningKey(key)
+                .build()
+                .parseClaimsJws(token)
+                .getBody()
+                .getSubject();
+
+        assertEquals("", subject, "Token should handle empty username");
+    }
+
+    /**
+     * Test token generation with null username
+     */
+    @Test
+    void token_WithNullUsername_ShouldGenerateTokenWithNullSubject() {
+        User nullUsernameUser = new User("1", null, "password");
+
+        String token = nullUsernameUser.token(TEST_SECRET);
+        SecretKey key = Keys.hmacShaKeyFor(TEST_SECRET.getBytes());
+        
+        String subject = Jwts.parserBuilder()
+                .setSigningKey(key)
+                .build()
+                .parseClaimsJws(token)
+                .getBody()
+                .getSubject();
+
+        assertNull(subject, "Token should handle null username");
     }
 
     // ==================== assertAuth Tests ====================
@@ -277,6 +414,51 @@ class UserTest {
         } finally {
             restoreOutput();
         }
+    }
+
+    /**
+     * Test that assertAuth throws Unauthorized with correct message
+     */
+    @Test
+    void assertAuth_WithInvalidToken_ShouldThrowUnauthorizedWithMessage() {
+        String invalidToken = "invalid.token.here";
+
+        Unauthorized exception = assertThrows(Unauthorized.class, 
+                () -> User.assertAuth(TEST_SECRET, invalidToken),
+                "assertAuth should throw Unauthorized for invalid token");
+        
+        assertNotNull(exception.getMessage(), "Unauthorized exception should have a message");
+    }
+
+    /**
+     * Test that assertAuth handles token with only header
+     */
+    @Test
+    void assertAuth_WithPartialToken_ShouldThrowUnauthorized() {
+        String partialToken = "eyJhbGciOiJIUzI1NiJ9";
+
+        assertThrows(Unauthorized.class, () -> User.assertAuth(TEST_SECRET, partialToken),
+                "assertAuth should throw Unauthorized for partial token");
+    }
+
+    /**
+     * Test that assertAuth handles token with whitespace
+     */
+    @Test
+    void assertAuth_WithWhitespaceToken_ShouldThrowUnauthorized() {
+        assertThrows(Unauthorized.class, () -> User.assertAuth(TEST_SECRET, "   "),
+                "assertAuth should throw Unauthorized for whitespace token");
+    }
+
+    /**
+     * Test that assertAuth handles malformed base64 in token
+     */
+    @Test
+    void assertAuth_WithMalformedBase64Token_ShouldThrowUnauthorized() {
+        String malformedToken = "!!!.@@@.###";
+
+        assertThrows(Unauthorized.class, () -> User.assertAuth(TEST_SECRET, malformedToken),
+                "assertAuth should throw Unauthorized for malformed base64 token");
     }
 
     // ==================== fetch Method Tests ====================
@@ -614,6 +796,171 @@ class UserTest {
         }
     }
 
+    /**
+     * Test that fetch handles ResultSet.next() exception
+     */
+    @Test
+    void fetch_WhenResultSetNextFails_ShouldReturnNull() throws Exception {
+        try (MockedStatic<Postgres> postgresMock = mockStatic(Postgres.class)) {
+            postgresMock.when(Postgres::connection).thenReturn(mockConnection);
+            setupMockDatabaseConnection();
+            when(mockStatement.executeQuery(anyString())).thenReturn(mockResultSet);
+            when(mockResultSet.next()).thenThrow(new RuntimeException("ResultSet navigation failed"));
+
+            User result = User.fetch("testUser");
+
+            assertNull(result, "Fetch should return null when ResultSet.next() fails");
+        }
+    }
+
+    /**
+     * Test that fetch handles ResultSet.getString() exception
+     */
+    @Test
+    void fetch_WhenGetStringFails_ShouldReturnNull() throws Exception {
+        captureOutput();
+        try {
+            try (MockedStatic<Postgres> postgresMock = mockStatic(Postgres.class)) {
+                postgresMock.when(Postgres::connection).thenReturn(mockConnection);
+                setupMockDatabaseConnection();
+                when(mockStatement.executeQuery(anyString())).thenReturn(mockResultSet);
+                when(mockResultSet.next()).thenReturn(true);
+                when(mockResultSet.getString("user_id")).thenThrow(new RuntimeException("Column not found"));
+
+                User result = User.fetch("testUser");
+
+                assertNull(result, "Fetch should return null when getString() fails");
+            }
+        } finally {
+            restoreOutput();
+        }
+    }
+
+    /**
+     * Test that fetch handles connection close exception gracefully
+     */
+    @Test
+    void fetch_WhenConnectionCloseFails_ShouldStillReturnUser() throws Exception {
+        String username = "testUser";
+        
+        try (MockedStatic<Postgres> postgresMock = mockStatic(Postgres.class)) {
+            postgresMock.when(Postgres::connection).thenReturn(mockConnection);
+            setupMockDatabaseConnection();
+            when(mockStatement.executeQuery(anyString())).thenReturn(mockResultSet);
+            when(mockResultSet.next()).thenReturn(true);
+            when(mockResultSet.getString("user_id")).thenReturn("1");
+            when(mockResultSet.getString("username")).thenReturn(username);
+            when(mockResultSet.getString("password")).thenReturn("password");
+            doThrow(new RuntimeException("Close failed")).when(mockConnection).close();
+
+            User result = User.fetch(username);
+
+            // The finally block returns user regardless of close exception
+            assertNotNull(result, "Fetch should return user even if connection close fails");
+        }
+    }
+
+    /**
+     * Test that fetch prints exception class name and message
+     */
+    @Test
+    void fetch_OnException_ShouldPrintExceptionClassAndMessage() {
+        captureOutput();
+        try {
+            RuntimeException testException = new RuntimeException("Specific error message");
+            
+            try (MockedStatic<Postgres> postgresMock = mockStatic(Postgres.class)) {
+                postgresMock.when(Postgres::connection).thenThrow(testException);
+
+                User.fetch("testUser");
+
+                String errorOutput = errContent.toString();
+                assertTrue(errorOutput.contains("RuntimeException"), 
+                        "Error output should contain exception class name");
+                assertTrue(errorOutput.contains("Specific error message"), 
+                        "Error output should contain exception message");
+            }
+        } finally {
+            restoreOutput();
+        }
+    }
+
+    /**
+     * Test that fetch handles username with newline characters
+     */
+    @Test
+    void fetch_WithNewlineInUsername_ShouldIncludeInQuery() throws Exception {
+        String username = "user\nwith\nnewlines";
+        
+        try (MockedStatic<Postgres> postgresMock = mockStatic(Postgres.class)) {
+            postgresMock.when(Postgres::connection).thenReturn(mockConnection);
+            setupMockDatabaseConnection();
+            when(mockStatement.executeQuery(anyString())).thenReturn(mockResultSet);
+            when(mockResultSet.next()).thenReturn(false);
+
+            User.fetch(username);
+
+            verify(mockStatement).executeQuery(contains(username));
+        }
+    }
+
+    /**
+     * Test that fetch handles username with tab characters
+     */
+    @Test
+    void fetch_WithTabInUsername_ShouldIncludeInQuery() throws Exception {
+        String username = "user\twith\ttabs";
+        
+        try (MockedStatic<Postgres> postgresMock = mockStatic(Postgres.class)) {
+            postgresMock.when(Postgres::connection).thenReturn(mockConnection);
+            setupMockDatabaseConnection();
+            when(mockStatement.executeQuery(anyString())).thenReturn(mockResultSet);
+            when(mockResultSet.next()).thenReturn(false);
+
+            User.fetch(username);
+
+            verify(mockStatement).executeQuery(contains(username));
+        }
+    }
+
+    /**
+     * Test that fetch handles very long username
+     */
+    @Test
+    void fetch_WithVeryLongUsername_ShouldIncludeInQuery() throws Exception {
+        String username = "a".repeat(1000);
+        
+        try (MockedStatic<Postgres> postgresMock = mockStatic(Postgres.class)) {
+            postgresMock.when(Postgres::connection).thenReturn(mockConnection);
+            setupMockDatabaseConnection();
+            when(mockStatement.executeQuery(anyString())).thenReturn(mockResultSet);
+            when(mockResultSet.next()).thenReturn(false);
+
+            User.fetch(username);
+
+            verify(mockStatement).executeQuery(contains(username));
+        }
+    }
+
+    /**
+     * Test that fetch handles unicode username
+     */
+    @Test
+    void fetch_WithUnicodeUsername_ShouldIncludeInQuery() throws Exception {
+        String username = "用户名αβγ";
+        
+        try (MockedStatic<Postgres> postgresMock = mockStatic(Postgres.class)) {
+            postgresMock.when(Postgres::connection).thenReturn(mockConnection);
+            setupMockDatabaseConnection();
+            when(mockStatement.executeQuery(anyString())).thenReturn(mockResultSet);
+            when(mockResultSet.next()).thenReturn(false);
+
+            User.fetch(username);
+
+            verify(mockStatement).executeQuery(contains(username));
+        }
+    }
+
     // ==================== Integration-style Tests ====================
 
     /**
@@ -633,7 +980,7 @@ class UserTest {
      * Test that different users can authenticate independently
      */
     @Test
-    void tokenAndAssertAuth_MultiplUsersIndependently_ShouldSucceed() {
+    void tokenAndAssertAuth_MultipleUsersIndependently_ShouldSucceed() {
         User user1 = new User("1", "user1", "password1");
         User user2 = new User("2", "user2", "password2");
 
@@ -644,6 +991,75 @@ class UserTest {
                 "First user authentication should succeed");
         assertDoesNotThrow(() -> User.assertAuth(TEST_SECRET, token2),
                 "Second user authentication should succeed");
+    }
+
+    /**
+     * Test that user created by fetch can generate valid token
+     */
+    @Test
+    void fetch_ThenToken_ShouldGenerateValidToken() throws Exception {
+        String username = "fetchedUser";
+        
+        try (MockedStatic<Postgres> postgresMock = mockStatic(Postgres.class)) {
+            postgresMock.when(Postgres::connection).thenReturn(mockConnection);
+            setupMockDatabaseConnection();
+            when(mockStatement.executeQuery(anyString())).thenReturn(mockResultSet);
+            when(mockResultSet.next()).thenReturn(true);
+            when(mockResultSet.getString("user_id")).thenReturn("1");
+            when(mockResultSet.getString("username")).thenReturn(username);
+            when(mockResultSet.getString("password")).thenReturn("hashedPassword");
+
+            User fetchedUser = User.fetch(username);
+            String token = fetchedUser.token(TEST_SECRET);
+
+            assertDoesNotThrow(() -> User.assertAuth(TEST_SECRET, token),
+                    "Token from fetched user should be valid");
+        }
+    }
+
+    /**
+     * Test cross-user token validation fails
+     */
+    @Test
+    void tokenAndAssertAuth_CrossUserValidation_ShouldFailWithWrongSecret() {
+        User user1 = new User("1", "user1", "password1");
+        String secret1 = "secretForUser1ThatIsLongEnough123";
+        String secret2 = "secretForUser2ThatIsLongEnough456";
+
+        String token1 = user1.token(secret1);
+
+        assertThrows(Unauthorized.class, () -> User.assertAuth(secret2, token1),
+                "Token generated with one secret should not validate with different secret");
+    }
+
+    /**
+     * Test that token remains valid after multiple verifications
+     */
+    @Test
+    void assertAuth_MultipleVerifications_ShouldAllSucceed() {
+        String token = testUser.token(TEST_SECRET);
+
+        for (int i = 0; i < 10; i++) {
+            final int iteration = i;
+            assertDoesNotThrow(() -> User.assertAuth(TEST_SECRET, token),
+                    "Token verification should succeed on iteration " + iteration);
+        }
+    }
+
+    /**
+     * Test sequential user operations
+     */
+    @Test
+    void sequentialOperations_CreateTokenVerify_ShouldWorkCorrectly() {
+        // Create multiple users and verify their tokens sequentially
+        for (int i = 0; i < 5; i++) {
+            User user = createUserWithAttributes(String.valueOf(i), "user" + i, "pass" + i);
+            String token = user.token(TEST_SECRET);
+            
+            final int index = i;
+            assertDoesNotThrow(() -> User.assertAuth(TEST_SECRET, token),
+                    "Sequential operation should succeed for user " + index);
+        }
     }
 }
 ```

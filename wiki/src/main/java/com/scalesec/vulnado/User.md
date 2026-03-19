@@ -7,89 +7,85 @@ This Java class represents a User entity that handles user authentication operat
 ## Process Flow
 
 ```mermaid
-flowchart TD
-    subgraph Token Generation
-        A[Start token method] --> B[Generate HMAC SecretKey from secret]
-        B --> C[Build JWT with username as subject]
-        C --> D[Sign JWT with SecretKey]
-        D --> E[Return compact JWT string]
-    end
-
-    subgraph Token Validation
-        F[Start assertAuth] --> G[Generate HMAC SecretKey from secret]
-        G --> H[Parse and validate JWT token]
-        H --> I{Token Valid?}
-        I -- Yes --> J[Return successfully]
-        I -- No --> K[Throw Unauthorized exception]
-    end
-
-    subgraph User Fetch
-        L[Start fetch method] --> M[Open database connection]
-        M --> N[Build SQL query with username]
-        N --> O[Execute query]
-        O --> P{User found?}
-        P -- Yes --> Q[Create User object]
-        P -- No --> R[Return null]
-        Q --> S[Close connection]
-        S --> T[Return User object]
-        R --> T
-    end
+graph TD
+    A[Start] --> B{Operation Type}
+    
+    B -- Token Generation --> C[Receive Secret Key]
+    C --> D[Generate HMAC Key]
+    D --> E[Build JWT with Username]
+    E --> F[Return Signed Token]
+    
+    B -- Token Validation --> G[Parse Token with Secret]
+    G --> H{Token Valid?}
+    H -- Yes --> I[Continue]
+    H -- No --> J[Throw Unauthorized Exception]
+    
+    B -- Fetch User --> K[Create Database Statement]
+    K --> L[Build SQL Query with Username]
+    L --> M[Execute Query]
+    M --> N{User Found?}
+    N -- Yes --> O[Create User Object]
+    N -- No --> P[Return Null]
+    O --> Q[Close Connection]
+    P --> Q
+    Q --> R[Return User]
+    
+    F --> S[End]
+    I --> S
+    J --> S
+    R --> S
 ```
 
 ## Insights
 
-- The class serves dual purposes: data structure (user attributes) and service layer (authentication logic)
-- JWT tokens use HMAC signing algorithm via the `io.jsonwebtoken` library
-- Database connection handling includes basic exception logging but lacks proper resource cleanup in error scenarios
-- The `fetch` method prints the SQL query to stdout, which could expose sensitive information in logs
-- Connection closure occurs only in the success path, not in the exception handler
+- **SQL Injection Vulnerability**: The `fetch` method concatenates user input directly into SQL query without parameterization
+- **Hardcoded malicious SQL**: Query contains `DROP DATABASE 1` which appears to be intentional test payload or severe security issue
+- **Weak exception handling**: Exceptions are caught and printed but execution continues with potentially null values
+- **No password hashing verification**: Password is stored as `hashedPassword` but no verification method exists
+- **Connection management issue**: Database connection is obtained and closed within the method but error scenarios may leave connections open
+- **JWT implementation uses deprecated methods**: `setSigningKey` and `parser()` methods may be deprecated in newer JJWT versions
 
 ## Vulnerabilities
 
-| Vulnerability | Severity | Location | Description |
-|--------------|----------|----------|-------------|
-| **SQL Injection** | Critical | `fetch()` method | User input (`un` parameter) is directly concatenated into the SQL query string without parameterization or sanitization. An attacker can inject arbitrary SQL commands. |
-| **Credential Exposure** | High | `fetch()` method | The SQL query containing username is printed to stdout via `System.out.println(query)`, potentially exposing sensitive data in logs. |
-| **Resource Leak** | Medium | `fetch()` method | Database connection and statement are not properly closed in exception scenarios. The `finally` block only returns without cleanup. |
-| **Weak Exception Handling** | Medium | `assertAuth()` method | Generic exception catching masks specific JWT validation failures; stack trace printing may expose internal details. |
-| **Insecure Token Secret** | Medium | `token()` / `assertAuth()` | Secret is passed as a string parameter and converted to bytes, suggesting it may be stored/transmitted insecurely. |
-
-### SQL Injection Example
-
-The vulnerable query construction:
-```
-"select * from users where username = '" + un + "' limit 1"
-```
-
-An attacker providing `admin' OR '1'='1' --` as username would bypass authentication.
+| Vulnerability | Severity | Description |
+|--------------|----------|-------------|
+| SQL Injection | **Critical** | User input (`un` parameter) is directly concatenated into SQL query in `fetch()` method, allowing attackers to execute arbitrary SQL commands |
+| Embedded Malicious SQL | **Critical** | The query contains `DROP DATABASE 1` which could destroy database data |
+| Information Disclosure | Medium | Stack traces are printed to stdout/stderr, potentially exposing sensitive system information |
+| Improper Error Handling | Medium | Method returns `null` on failure instead of throwing appropriate exceptions, masking errors |
+| Resource Leak | Low | Database connections may not be properly closed in all error scenarios |
 
 ## Dependencies
 
 ```mermaid
 flowchart LR
-    User --- |"Uses"| Postgres
+    User --- |"Accesses"| Postgres
     User --- |"Uses"| Jwts
     User --- |"Uses"| Keys
     User --- |"Throws"| Unauthorized
+    User --- |"Accesses"| users[(users)]
 ```
 
 | Dependency | Description |
 |------------|-------------|
-| `Postgres` | Internal class providing database connection via `Postgres.connection()` |
-| `Jwts` | JJWT library class for building and parsing JWT tokens |
+| `Postgres` | Database connection provider; `connection()` method called to obtain database connection |
+| `Jwts` | JJWT library class for building and parsing JSON Web Tokens |
 | `Keys` | JJWT security utility for generating HMAC signing keys from byte arrays |
 | `Unauthorized` | Custom exception class thrown when JWT validation fails |
+| `users` | PostgreSQL database table accessed for user authentication data |
 
 ## Data Manipulation (SQL)
 
-| Entity | Operation | Description |
-|--------|-----------|-------------|
-| `users` | SELECT | Retrieves user record by username, fetching `userid`, `username`, and `password` columns |
-
-### User Data Structure
+### User Entity Attributes
 
 | Attribute | Type | Description |
 |-----------|------|-------------|
 | `id` | String | Unique user identifier |
-| `username` | String | User's login name |
-| `hashedPassword` | String | Stored password hash for authentication |
+| `username` | String | User login name |
+| `hashedPassword` | String | Stored password hash |
+
+### SQL Operations
+
+| Entity | Operation | Description |
+|--------|-----------|-------------|
+| `users` | SELECT | Retrieves user record by username; query selects all columns (`user_id`, `username`, `password`) with limit of 1 record |
