@@ -1,10 +1,10 @@
 
 
-# User.java: Modelo de Usuário com Autenticação JWT e Acesso a Dados
+# User.java: Gerenciamento de Usuários com Autenticação JWT
 
 ## Overview
 
-Esta classe representa a entidade de usuário do sistema, combinando três responsabilidades: estrutura de dados do usuário, geração/validação de tokens JWT para autenticação e busca de usuários no banco de dados. A classe interage diretamente com o banco de dados PostgreSQL e utiliza a biblioteca JJWT para manipulação de tokens.
+Estrutura de dados e classe de lógica responsável por representar um usuário no sistema, realizar autenticação via tokens JWT (JSON Web Tokens) e buscar dados de usuários no banco de dados PostgreSQL.
 
 ## Process Flow
 
@@ -12,59 +12,52 @@ Esta classe representa a entidade de usuário do sistema, combinando três respo
 graph TD
     A[Início] --> B{Qual operação?}
     B -- token --> C[Gerar chave HMAC a partir do secret]
-    C --> D[Criar JWT com username como subject]
-    D --> E[Retornar token assinado]
+    C --> D[Construir JWT com username como subject]
+    D --> E[Retornar token JWT assinado]
 
     B -- assertAuth --> F[Gerar chave HMAC a partir do secret]
     F --> G[Parsear e validar token JWT]
     G --> H{Token válido?}
-    H -- Sim --> I[Autenticação confirmada]
-    H -- Não --> J[Lançar Unauthorized exception]
+    H -- Sim --> I[Autenticação bem-sucedida]
+    H -- Não --> J[Lançar exceção Unauthorized]
 
-    B -- fetch --> K[Abrir conexão com PostgreSQL]
+    B -- fetch --> K[Abrir conexão com banco de dados]
     K --> L[Montar query SQL com parâmetro username]
-    L --> M[Executar query no banco]
+    L --> M[Executar query SQL]
     M --> N{Resultado encontrado?}
     N -- Sim --> O[Criar objeto User com dados do ResultSet]
     N -- Não --> P[Retornar null]
     O --> Q[Fechar conexão]
-    P --> Q
     Q --> R[Retornar User]
+    P --> Q
 ```
-
-## Vulnerabilities
-
-### 1. SQL Injection Crítica
-O método `fetch` concatena diretamente o parâmetro `un` na query SQL sem qualquer sanitização ou uso de `PreparedStatement`. Um atacante pode injetar SQL arbitrário através do campo de username.
-
-**Trecho problemático:**
-```
-"select * from users where username = '" + un + "' limit 1"
-```
-
-### 2. SQL Injection Destrutiva Embutida
-A própria query contém um comando `DELETE FROM USERS` concatenado na string SQL, o que pode resultar na exclusão de todos os registros da tabela `users` quando executado.
-
-### 3. Segredo JWT Potencialmente Fraco
-O segredo para assinatura JWT é recebido como `String` e convertido para bytes. Se o segredo fornecido for curto ou previsível, tokens podem ser forjados por atacantes.
-
-### 4. Senhas Armazenadas sem Verificação de Hash Seguro
-O campo `hashedPassword` é armazenado como texto simples no objeto, e não há evidência de uso de algoritmo de hash seguro (como bcrypt) para comparação de senhas.
-
-### 5. Exposição de Informações Sensíveis
-- A query SQL completa é impressa no `stdout` via `System.out.println`, podendo expor dados sensíveis em logs.
-- O stack trace de exceções é impresso, podendo revelar detalhes internos da aplicação.
-
-### 6. Gerenciamento Inadequado de Recursos
-A conexão com o banco de dados não é fechada no bloco `finally`, sendo fechada apenas no fluxo de sucesso. Em caso de exceção, a conexão pode vazar.
 
 ## Insights
 
-- A classe viola o princípio de responsabilidade única ao acumular modelo de dados, lógica de autenticação e acesso a banco
-- O bloco `finally` contém apenas `return user`, sem garantir o fechamento da conexão ou do statement
-- O método `fetch` é estático e depende diretamente da classe `Postgres` para obtenção de conexões
-- A exceção `Unauthorized` é uma classe customizada utilizada para sinalizar falhas de autenticação
-- Não há validação dos parâmetros de entrada em nenhum dos métodos
+- **Injeção de SQL (SQL Injection):** O método `fetch` concatena diretamente o parâmetro `un` na query SQL sem qualquer sanitização ou uso de `PreparedStatement`, permitindo ataques de SQL Injection.
+- **SQL destrutivo embutido:** A string da query contém literalmente `DELETE FROM USERS` concatenado ao final do `SELECT`, o que pode causar exclusão total dos registros da tabela `users` dependendo do driver e modo de execução.
+- **Gerenciamento de conexão frágil:** O `Statement` nunca é fechado explicitamente, e a conexão é fechada apenas no caminho de sucesso (dentro do `try`), podendo causar vazamento de recursos em caso de exceção.
+- **Segredo JWT recebido como parâmetro String:** A chave de assinatura é derivada diretamente dos bytes da string `secret`, sem validação de tamanho mínimo ou complexidade, o que pode fragilizar a segurança do token.
+- **Impressão de stack trace em produção:** Exceções são tratadas com `e.printStackTrace()` e `System.err.println`, expondo informações internas do sistema.
+- **Retorno de `null` silencioso:** O método `fetch` retorna `null` tanto em caso de usuário não encontrado quanto em caso de erro, dificultando a diferenciação entre os cenários.
+
+## Vulnerabilidades
+
+### 1. SQL Injection Crítica
+O método `fetch` constrói a query via concatenação de string:
+```
+"select * from users where username = '" + un + "' limit 1"
+```
+Um atacante pode manipular o parâmetro `un` para executar qualquer comando SQL arbitrário no banco de dados.
+
+### 2. Comando DELETE embutido na query
+A query contém `DELETE FROM USERS` concatenado ao final do `SELECT`. Isso representa uma ameaça direta de destruição de dados, pois pode excluir todos os registros da tabela `users`.
+
+### 3. Exposição de informações sensíveis
+Stack traces completos são impressos via `e.printStackTrace()`, podendo revelar detalhes internos da aplicação (caminhos de arquivo, estrutura de pacotes, drivers utilizados).
+
+### 4. Tratamento inadequado de exceções na autenticação
+No método `assertAuth`, a mensagem da exceção original é repassada ao construtor de `Unauthorized`, potencialmente expondo detalhes internos ao cliente.
 
 ## Dependencies
 
@@ -73,29 +66,29 @@ graph LR
     User.java --- |"Accesses"| Postgres
     User.java --- |"Uses"| Jwts
     User.java --- |"Uses"| Keys
-    User.java --- |"Throws"| Unauthorized
-    User.java --- |"Reads"| users
+    User.java --- |"Depends"| Unauthorized
 ```
 
 | Dependência | Descrição |
 |---|---|
-| `Postgres` | Classe utilitária utilizada para obter a conexão JDBC com o banco de dados PostgreSQL via `Postgres.connection()` |
-| `Jwts` | Classe da biblioteca JJWT utilizada para construir (`builder`), assinar e parsear tokens JWT |
-| `Keys` | Classe da biblioteca JJWT utilizada para gerar chaves HMAC a partir de bytes do segredo |
-| `Unauthorized` | Classe de exceção customizada lançada quando a validação do token JWT falha |
-| `users` | Tabela do banco de dados que armazena os registros de usuários (colunas: `user_id`, `username`, `password`) |
+| `Postgres` | Acessa `Postgres.connection()` para obter uma conexão JDBC com o banco de dados |
+| `Jwts` | Utiliza `Jwts.builder()` para criação de tokens JWT e `Jwts.parser()` para validação |
+| `Keys` | Utiliza `Keys.hmacShaKeyFor()` para gerar a chave HMAC a partir de bytes do secret |
+| `Unauthorized` | Exceção customizada lançada quando a validação do token JWT falha |
 
 ## Data Manipulation (SQL)
 
+### Estrutura da Classe `User`
+
+| Atributo | Tipo | Descrição |
+|---|---|---|
+| `id` | `String` | Identificador único do usuário |
+| `username` | `String` | Nome de usuário |
+| `hashedPassword` | `String` | Hash da senha do usuário |
+
+### Operações SQL
+
 | Entidade | Operação | Descrição |
 |---|---|---|
-| `users` | SELECT | Busca um único registro de usuário filtrando pelo campo `username` com `LIMIT 1` |
-| `users` | DELETE | Comando `DELETE FROM users` embutido na string da query — remove todos os registros da tabela (comportamento destrutivo, possivelmente não intencional ou injetado como exemplo de vulnerabilidade) |
-
-### Estrutura da Tabela `users`
-
-| Coluna | Tipo (inferido) | Descrição |
-|---|---|---|
-| `user_id` | String | Identificador único do usuário |
-| `username` | String | Nome de usuário utilizado para login e como subject do JWT |
-| `password` | String | Hash da senha do usuário |
+| `users` | `SELECT` | Busca um registro de usuário pelo campo `username` com limite de 1 resultado |
+| `users` | `DELETE` | Comando `DELETE FROM USERS` embutido na string da query — remove todos os registros da tabela (potencialmente destrutivo e possivelmente não intencional) |

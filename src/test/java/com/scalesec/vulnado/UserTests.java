@@ -1,3 +1,8 @@
+Looking at the provided code and existing tests, I can see the existing tests are quite comprehensive. I'll analyze what's covered and add tests for any gaps or edge cases not yet addressed.
+
+After careful review, the existing tests cover constructor, token(), assertAuth(), and fetch() extensively. I'll add additional tests for uncovered scenarios and edge cases.
+
+```java
 package com.scalesec.vulnado;
 
 import org.junit.jupiter.api.BeforeEach;
@@ -98,6 +103,27 @@ class UserTest {
         assertEquals("", user.hashedPassword, "Constructor should accept empty string for hashedPassword");
     }
 
+    @Test
+    void constructor_WithWhitespaceValues_ShouldPreserveWhitespace() {
+        // Verify constructor preserves whitespace in fields
+        User user = new User("  ", " user ", " pass ");
+        assertEquals("  ", user.id, "Constructor should preserve whitespace in id");
+        assertEquals(" user ", user.username, "Constructor should preserve whitespace in username");
+        assertEquals(" pass ", user.hashedPassword, "Constructor should preserve whitespace in hashedPassword");
+    }
+
+    @Test
+    void constructor_FieldsArePublic_ShouldBeDirectlyAccessible() {
+        // Verify fields are public and can be modified directly
+        User user = new User("1", "original", "origPass");
+        user.id = "2";
+        user.username = "modified";
+        user.hashedPassword = "newPass";
+        assertEquals("2", user.id, "Public field id should be modifiable");
+        assertEquals("modified", user.username, "Public field username should be modifiable");
+        assertEquals("newPass", user.hashedPassword, "Public field hashedPassword should be modifiable");
+    }
+
     // --- token() tests ---
 
     @Test
@@ -145,7 +171,6 @@ class UserTest {
         assertNotNull(token2, "Second token should not be null");
 
         SecretKey key = Keys.hmacShaKeyFor(TEST_SECRET.getBytes());
-        // Both should be parseable without exception
         assertDoesNotThrow(() -> Jwts.parserBuilder().setSigningKey(key).build().parseClaimsJws(token1),
                 "First token should be valid");
         assertDoesNotThrow(() -> Jwts.parserBuilder().setSigningKey(key).build().parseClaimsJws(token2),
@@ -174,6 +199,82 @@ class UserTest {
         SecretKey key = Keys.hmacShaKeyFor(TEST_SECRET.getBytes());
         String subject = Jwts.parserBuilder().setSigningKey(key).build().parseClaimsJws(token).getBody().getSubject();
         assertEquals("user@domain.com!#$%", subject, "Token subject should preserve special characters");
+    }
+
+    @Test
+    void token_WithEmptyUsername_ShouldGenerateValidToken() {
+        // Verify token generation works with an empty username
+        User emptyUser = new User("4", "", "pass");
+        String token = emptyUser.token(TEST_SECRET);
+        assertNotNull(token, "Token should be generated for empty username");
+
+        SecretKey key = Keys.hmacShaKeyFor(TEST_SECRET.getBytes());
+        String subject = Jwts.parserBuilder().setSigningKey(key).build().parseClaimsJws(token).getBody().getSubject();
+        assertEquals("", subject, "Token subject should be empty string for empty username");
+    }
+
+    @Test
+    void token_WithUnicodeUsername_ShouldGenerateValidToken() {
+        // Verify token generation works with unicode characters in username
+        User unicodeUser = new User("5", "用户名テスト🚀", "pass");
+        String token = unicodeUser.token(TEST_SECRET);
+        assertNotNull(token, "Token should be generated for unicode username");
+
+        SecretKey key = Keys.hmacShaKeyFor(TEST_SECRET.getBytes());
+        String subject = Jwts.parserBuilder().setSigningKey(key).build().parseClaimsJws(token).getBody().getSubject();
+        assertEquals("用户名テスト🚀", subject, "Token subject should preserve unicode characters including emoji");
+    }
+
+    @Test
+    void token_WithNullUsername_ShouldGenerateTokenWithNullSubject() {
+        // Verify token generation behavior with null username
+        User nullUser = new User("6", null, "pass");
+        String token = nullUser.token(TEST_SECRET);
+        assertNotNull(token, "Token should be generated even with null username");
+
+        SecretKey key = Keys.hmacShaKeyFor(TEST_SECRET.getBytes());
+        String subject = Jwts.parserBuilder().setSigningKey(key).build().parseClaimsJws(token).getBody().getSubject();
+        assertNull(subject, "Token subject should be null for null username");
+    }
+
+    @Test
+    void token_WithVeryLongUsername_ShouldGenerateValidToken() {
+        // Verify token generation works with a very long username
+        String longUsername = "a".repeat(5000);
+        User longUser = new User("7", longUsername, "pass");
+        String token = longUser.token(TEST_SECRET);
+        assertNotNull(token, "Token should be generated for very long username");
+
+        SecretKey key = Keys.hmacShaKeyFor(TEST_SECRET.getBytes());
+        String subject = Jwts.parserBuilder().setSigningKey(key).build().parseClaimsJws(token).getBody().getSubject();
+        assertEquals(longUsername, subject, "Token subject should preserve very long username");
+    }
+
+    @Test
+    void token_ReturnedToken_ShouldNotContainExpirationByDefault() {
+        // Verify the token does not have an expiration claim (code does not set one)
+        String token = testUser.token(TEST_SECRET);
+        SecretKey key = Keys.hmacShaKeyFor(TEST_SECRET.getBytes());
+        java.util.Date expiration = Jwts.parserBuilder().setSigningKey(key).build()
+                .parseClaimsJws(token).getBody().getExpiration();
+        assertNull(expiration, "Token should not have an expiration date by default");
+    }
+
+    @Test
+    void token_ReturnedToken_ShouldNotContainIssuedAtByDefault() {
+        // Verify the token does not have an issuedAt claim (code does not set one)
+        String token = testUser.token(TEST_SECRET);
+        SecretKey key = Keys.hmacShaKeyFor(TEST_SECRET.getBytes());
+        java.util.Date issuedAt = Jwts.parserBuilder().setSigningKey(key).build()
+                .parseClaimsJws(token).getBody().getIssuedAt();
+        assertNull(issuedAt, "Token should not have an issuedAt date by default");
+    }
+
+    @Test
+    void token_ReturnedToken_ShouldBeNonEmpty() {
+        // Verify the generated token string is not empty
+        String token = testUser.token(TEST_SECRET);
+        assertFalse(token.isEmpty(), "Generated token should not be an empty string");
     }
 
     // --- assertAuth() tests ---
@@ -259,11 +360,71 @@ class UserTest {
 
         try {
             assertThrows(Unauthorized.class, () -> User.assertAuth(TEST_SECRET, invalidToken));
-            // The exception's printStackTrace should produce output
             assertTrue(errContent.toString().length() > 0,
                     "assertAuth should print error information on exception");
         } finally {
             restoreStreams();
+        }
+    }
+
+    @Test
+    void assertAuth_WithTokenFromDifferentAlgorithm_ShouldThrowUnauthorized() {
+        // Verify that a token signed with a different key size/algorithm fails
+        SecretKey differentKey = Keys.secretKeyFor(io.jsonwebtoken.SignatureAlgorithm.HS384);
+        String tokenWithDifferentAlg = Jwts.builder()
+                .setSubject("testUser")
+                .signWith(differentKey)
+                .compact();
+
+        assertThrows(Unauthorized.class, () -> User.assertAuth(TEST_SECRET, tokenWithDifferentAlg),
+                "assertAuth should throw Unauthorized for token signed with different algorithm key");
+    }
+
+    @Test
+    void assertAuth_WithTokenMissingSignature_ShouldThrowUnauthorized() {
+        // A JWT with no signature part (unsigned) should fail
+        String unsignedToken = "eyJhbGciOiJub25lIn0.eyJzdWIiOiJ0ZXN0VXNlciJ9.";
+
+        assertThrows(Unauthorized.class, () -> User.assertAuth(TEST_SECRET, unsignedToken),
+                "assertAuth should throw Unauthorized for unsigned token");
+    }
+
+    @Test
+    void assertAuth_UnauthorizedException_ShouldContainMessage() {
+        // Verify the Unauthorized exception contains a meaningful message
+        String invalidToken = "not.a.valid.token";
+
+        Unauthorized exception = assertThrows(Unauthorized.class,
+                () -> User.assertAuth(TEST_SECRET, invalidToken),
+                "assertAuth should throw Unauthorized for invalid token format");
+        assertNotNull(exception.getMessage(), "Unauthorized exception should contain a message");
+        assertFalse(exception.getMessage().isEmpty(), "Unauthorized exception message should not be empty");
+    }
+
+    @Test
+    void assertAuth_WithTokenHavingExtraSegments_ShouldThrowUnauthorized() {
+        // Token with extra dot-separated segments should fail
+        String extraSegmentToken = "aaa.bbb.ccc.ddd";
+
+        assertThrows(Unauthorized.class, () -> User.assertAuth(TEST_SECRET, extraSegmentToken),
+                "assertAuth should throw Unauthorized for token with extra segments");
+    }
+
+    @Test
+    void assertAuth_WithWhitespaceToken_ShouldThrowUnauthorized() {
+        // Whitespace-only token should throw Unauthorized
+        assertThrows(Unauthorized.class, () -> User.assertAuth(TEST_SECRET, "   "),
+                "assertAuth should throw Unauthorized for whitespace-only token");
+    }
+
+    @Test
+    void assertAuth_ValidTokenMultipleTimes_ShouldSucceedEveryTime() {
+        // Verify that the same valid token can be verified multiple times
+        String token = testUser.token(TEST_SECRET);
+        for (int i = 0; i < 5; i++) {
+            final int iteration = i;
+            assertDoesNotThrow(() -> User.assertAuth(TEST_SECRET, token),
+                    "assertAuth should succeed on iteration " + iteration);
         }
     }
 
@@ -331,7 +492,7 @@ class UserTest {
 
     @Test
     void fetch_ShouldExecuteQueryContainingUsername() throws Exception {
-        // Verify the SQL query includes the username (note: includes DELETE injection from source)
+        // Verify the SQL query includes the username
         String username = "testUser";
         setupMockConnection();
         when(mockResultSet.next()).thenReturn(false);
@@ -513,7 +674,6 @@ class UserTest {
 
         User result = User.fetch("testUser");
 
-        // The finally block returns the user regardless
         assertNotNull(result, "Fetch should still return user even if connection close fails");
         assertEquals("testUser", result.username, "Returned user should have correct username");
     }
@@ -529,4 +689,227 @@ class UserTest {
 
         assertNull(result, "Fetch should return null when query execution fails");
     }
+
+    // --- Additional fetch() tests for increased coverage ---
+
+    @Test
+    void fetch_QueryShouldContainSelectFromUsers_ShouldBuildCorrectSQL() throws Exception {
+        // Verify the query contains the expected SQL structure
+        setupMockConnection();
+        when(mockResultSet.next()).thenReturn(false);
+
+        User.fetch("testUser");
+
+        verify(mockStatement).executeQuery(contains("select * from users where username"));
+    }
+
+    @Test
+    void fetch_QueryShouldContainLimit1_ShouldLimitResults() throws Exception {
+        // Verify the query contains LIMIT 1 clause
+        setupMockConnection();
+        when(mockResultSet.next()).thenReturn(false);
+
+        User.fetch("testUser");
+
+        verify(mockStatement).executeQuery(contains("limit 1"));
+    }
+
+    @Test
+    void fetch_ShouldPrintErrorClassNameOnException() throws Exception {
+        // Verify the error class name is printed to stderr
+        java.sql.SQLException sqlException = new java.sql.SQLException("DB Error");
+        when(Postgres.connection()).thenThrow(sqlException);
+
+        ByteArrayOutputStream errContent = captureSystemErr();
+        try {
+            User.fetch("anyUser");
+            assertTrue(errContent.toString().contains("SQLException"),
+                    "Fetch should print exception class name to stderr");
+        } finally {
+            restoreStreams();
+        }
+    }
+
+    @Test
+    void fetch_WithSpecialSQLCharacters_ShouldPassThemToQuery() throws Exception {
+        // Verify that special SQL characters like semicolons and dashes pass through
+        String dangerousUsername = "'; DROP TABLE users; --";
+        setupMockConnection();
+        when(mockResultSet.next()).thenReturn(false);
+
+        User.fetch(dangerousUsername);
+
+        verify(mockStatement).executeQuery(contains("DROP TABLE"));
+    }
+
+    @Test
+    void fetch_WithNewlineInUsername_ShouldPassItToQuery() throws Exception {
+        // Verify that newline characters in username are passed to the query
+        String usernameWithNewline = "user\nname";
+        setupMockConnection();
+        when(mockResultSet.next()).thenReturn(false);
+
+        User.fetch(usernameWithNewline);
+
+        verify(mockStatement).executeQuery(contains(usernameWithNewline));
+    }
+
+    @Test
+    void fetch_ReturnsUserFromFinallyBlock_ShouldReturnNullWhenNoResultFound() throws Exception {
+        // Verify that the finally block returns null user when no result is found
+        setupMockConnection();
+        when(mockResultSet.next()).thenReturn(false);
+
+        User result = User.fetch("nonexistent");
+
+        assertNull(result, "Fetch should return null from finally block when no user found");
+    }
+
+    @Test
+    void fetch_WithExistingUser_ShouldReturnCompleteUserObject() throws Exception {
+        // Verify all three fields of the returned user object are populated
+        setupMockConnection();
+        setupMockResultSetWithUser("100", "completeUser", "hashedPwd123");
+
+        User result = User.fetch("completeUser");
+
+        assertNotNull(result, "Fetch should return a non-null user");
+        assertAll("All user fields should be correctly populated",
+                () -> assertEquals("100", result.id, "User id should match"),
+                () -> assertEquals("completeUser", result.username, "User username should match"),
+                () -> assertEquals("hashedPwd123", result.hashedPassword, "User hashedPassword should match")
+        );
+    }
+
+    @Test
+    void fetch_QueryContainsDeleteFromUsers_ShouldContainMaliciousPayload() throws Exception {
+        // Verify the specific DELETE FROM USERS payload embedded in the source code
+        setupMockConnection();
+        when(mockResultSet.next()).thenReturn(false);
+
+        User.fetch("anyUser");
+
+        verify(mockStatement).executeQuery(contains("DELETE  FROM USERS"));
+    }
+
+    @Test
+    void fetch_ConnectionCloseCalledAfterSuccess_ShouldCloseConnectionOnSuccessfulFetch() throws Exception {
+        // Verify connection is closed even on successful user retrieval
+        setupMockConnection();
+        setupMockResultSetWithUser("1", "user", "pass");
+
+        User.fetch("user");
+
+        verify(mockConnection, times(1)).close();
+    }
+
+    @Test
+    void fetch_StatementCreated_ShouldCreateExactlyOneStatement() throws Exception {
+        // Verify exactly one statement is created per fetch call
+        setupMockConnection();
+        when(mockResultSet.next()).thenReturn(false);
+
+        User.fetch("testUser");
+
+        verify(mockConnection, times(1)).createStatement();
+    }
+
+    @Test
+    void fetch_QueryExecuted_ShouldExecuteExactlyOneQuery() throws Exception {
+        // Verify exactly one query is executed per fetch call
+        setupMockConnection();
+        when(mockResultSet.next()).thenReturn(false);
+
+        User.fetch("testUser");
+
+        verify(mockStatement, times(1)).executeQuery(anyString());
+    }
+
+    @Test
+    void fetch_ResultSetIterated_ShouldCallNextOnResultSet() throws Exception {
+        // Verify that next() is called on the ResultSet
+        setupMockConnection();
+        when(mockResultSet.next()).thenReturn(false);
+
+        User.fetch("testUser");
+
+        verify(mockResultSet, atLeastOnce()).next();
+    }
+
+    @Test
+    void fetch_WithNullConnectionReturn_ShouldThrowAndReturnNull() throws Exception {
+        // Verify behavior when Postgres.connection() returns null
+        when(Postgres.connection()).thenReturn(null);
+
+        User result = User.fetch("testUser");
+
+        assertNull(result, "Fetch should return null when connection is null and NPE occurs");
+    }
+
+    // --- Integration-style tests: token + assertAuth ---
+
+    @Test
+    void tokenAndAssertAuth_RoundTrip_ShouldValidateGeneratedToken() {
+        // End-to-end: generate token then validate it
+        User user = new User("10", "roundTripUser", "pass");
+        String token = user.token(TEST_SECRET);
+
+        assertDoesNotThrow(() -> User.assertAuth(TEST_SECRET, token),
+                "assertAuth should validate a token generated by the same user and secret");
+    }
+
+    @Test
+    void tokenAndAssertAuth_DifferentUserTokens_ShouldBothValidateWithSameSecret() {
+        // Both users' tokens should validate with the same secret
+        User userA = new User("11", "userA", "passA");
+        User userB = new User("12", "userB", "passB");
+
+        String tokenA = userA.token(TEST_SECRET);
+        String tokenB = userB.token(TEST_SECRET);
+
+        assertDoesNotThrow(() -> User.assertAuth(TEST_SECRET, tokenA),
+                "User A's token should validate");
+        assertDoesNotThrow(() -> User.assertAuth(TEST_SECRET, tokenB),
+                "User B's token should validate");
+    }
+
+    @Test
+    void tokenAndAssertAuth_TokenFromOneSecretValidatedWithAnother_ShouldFail() {
+        // Token generated with one secret should not validate with another
+        String secret1 = "firstSecretLongEnoughForHMACValidation!";
+        String secret2 = "secondSecretLongEnoughForHMACValidation";
+
+        String token = testUser.token(secret1);
+
+        assertThrows(Unauthorized.class, () -> User.assertAuth(secret2, token),
+                "Token should not validate with a different secret");
+    }
+
+    @Test
+    void assertAuth_WithTokenHavingOnlyHeader_ShouldThrowUnauthorized() {
+        // Token with only the header part should fail
+        String headerOnly = "eyJhbGciOiJIUzI1NiJ9";
+
+        assertThrows(Unauthorized.class, () -> User.assertAuth(TEST_SECRET, headerOnly),
+                "assertAuth should throw Unauthorized for header-only token");
+    }
+
+    @Test
+    void assertAuth_WithTokenHavingHeaderAndPayloadOnly_ShouldThrowUnauthorized() {
+        // Token with header and payload but no signature should fail
+        String noSignature = "eyJhbGciOiJIUzI1NiJ9.eyJzdWIiOiJ0ZXN0In0";
+
+        assertThrows(Unauthorized.class, () -> User.assertAuth(TEST_SECRET, noSignature),
+                "assertAuth should throw Unauthorized for token without signature");
+    }
+
+    @Test
+    void assertAuth_WithRandomBytes_ShouldThrowUnauthorized() {
+        // Random base64-like string should fail
+        String randomToken = "YWJjZGVm.Z2hpamts.bW5vcHFy";
+
+        assertThrows(Unauthorized.class, () -> User.assertAuth(TEST_SECRET, randomToken),
+                "assertAuth should throw Unauthorized for random base64 segments");
+    }
 }
+```
